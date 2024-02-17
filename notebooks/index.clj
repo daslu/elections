@@ -199,34 +199,42 @@
                                                      (-> feature
                                                          .-properties
                                                          .-style))}))
-                        #_(.bindTooltip (fn [layer]
-                                          (-> layer
-                                              .-feature
-                                              .-properties
-                                              .-tooltip)))
+                        (.bindTooltip (fn [layer]
+                                        (-> layer
+                                            .-feature
+                                            .-properties
+                                            .-tooltip)))
                         (.addTo m))))}])
     details]
    {:reagent/deps [:leaflet]}))
 
 
 (delay
-  (choropleth-map
-   {:provider "OpenStreetMap.Mapnik"
-    :center Acre-center
-    :zoom 13
-    :enriched-features
-    (->> stat2011-features-for-drawing
-         (filter #(-> % :properties :SHEM_YISHU (= "עכו")))
-         (mapv (fn [feature]
-                 (-> feature
-                     (assoc :type "Feature")
-                     (update :geometry
-                             (fn [geometry]
-                               (-> geometry
-                                   geoio/to-geojson
-                                   (charred/read-json {:key-fn keyword}))))
-                     (assoc-in [:properties :style]
-                               {:color      "purple"
-                                :fillColor  "purple"
-                                :opacity 1
-                                :fillOpacity 0.5})))))}))
+  (let [election 25]
+    (choropleth-map
+     {:provider "OpenStreetMap.Mapnik"
+      :center Acre-center
+      :zoom 13
+      :enriched-features
+      (->> stat2011-features-for-drawing
+           (filter #(-> % :properties :SHEM_YISHU (= "עכו")))
+           (mapv (fn [feature]
+                   (let [info (-> feature
+                                  :properties
+                                  :STAT11
+                                  ((election->stat2011->counts
+                                    election)))]
+                     (-> feature
+                         (assoc :type "Feature")
+                         (update :geometry
+                                 (fn [geometry]
+                                   (-> geometry
+                                       geoio/to-geojson
+                                       (charred/read-json {:key-fn keyword}))))
+                         (assoc-in [:properties :style]
+                                   {:color      "purple"
+                                    :fillColor  "purple"
+                                    :opacity 1
+                                    :fillOpacity 0.5})
+                         (assoc-in [:properties :tooltip]
+                                   (pr-str info)))))))})))
