@@ -1,3 +1,5 @@
 .cpcache
 .nrepl-port
 temp/
+.clay.html
+.clay_files
