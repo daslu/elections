@@ -1,4 +1,4 @@
-(ns scratch
+(ns index
   (:require [fastmath.stats]
             [tablecloth.api :as tc]
             [tech.v3.datatype.functional :as fun]
