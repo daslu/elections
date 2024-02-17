@@ -41,14 +41,14 @@
 (def Heb-column-names->std
   {"שם ישוב" :place-name
    "סמל ישוב" :place-id
-   "מספר קלפי" :kalpi-number
+   "קלפי" :kalpi
+   "מספר קלפי" :kalpi
    "בזב" :bzb
    "מצביעים" :voters
    "פסולים" :invalid
    "כשרים" :valid
    "סמל ועדה" :vaada-id
    "ברזל" :barzel
-   "קלפי" :kalpi
    "ריכוז" :ricuz
    "שופט" :judge})
 
@@ -57,7 +57,7 @@
        (map (fn [i]
               [i (-> (format "data/expb%s.csv" i)
                      (tc/dataset {:key-fn (fn [s]
-                                            (or (Heb-column-names->English s)
+                                            (or (Heb-column-names->std s)
                                                 (->> s
                                                      (map Heb-letter->Eng-name)
                                                      (str/join "-")
@@ -86,27 +86,31 @@
                      (tc/map-columns :kalpi [:kalpi] #(Integer/parseInt %)))]))
        (into {})))
 
-
-(->> 25
-     ((juxt votes mapping))
-     (map (fn [ds]
-            (-> ds
-                (tc/select-rows #(-> % :place-id (= 4000)))))))
-
-
+(def meshutefet-columns
+  {21 [:vav-memsofit :dalet-ayin-memsofit]
+   22 [:vav-dalet-ayin-memsofit]
+   23 [:vav-dalet-ayin-memsofit]
+   24 [:vav-dalet-ayin-memsofit :ayin-memsofit]
+   25 [:vav-memsofit :dalet :ayin-memsofit]})
 
 
-
-(-> (votes 25)
-    (tc/add-column :meshutefet (fn [ds]
-                                 (fun/+ (:vav-memsofit ds)
-                                        (:dalet ds))))
-    (tc/add-column :kalpi (fn [ds]
-                            (fun/round (:kalpi ds))))
-    (tc/left-join (mapping 25)
-                  [:place-name :place-id :kalpi])
-    (tc/select-rows #(-> % :place-name (= "עכו")))
-    (tc/select-columns [:kalpi :stat2011 :meshutefet :mem-chet-lamed])
-    (tc/group-by [:stat2011])
-    (tc/aggregate-columns [:meshutefet :mem-chet-lamed] fun/sum)
-    (print/print-range :all))
+(def aggregated-by-stat2011
+  (->> (range 21 26)
+       (mapv
+        (fn [election]
+          (-> election
+              (votes)
+              (tc/add-column :meshutefet (fn [ds]
+                                           (->> ds
+                                                ((apply juxt (meshutefet-columns
+                                                              election)))
+                                                (apply map fun/+))))
+              (tc/add-column :kalpi (fn [ds]
+                                      (fun/round (:kalpi ds))))
+              (tc/left-join (mapping election)
+                            [:place-name :place-id :kalpi])
+              (tc/select-rows #(-> % :place-name (= "עכו")))
+              (tc/select-columns [:kalpi :stat2011 :meshutefet :mem-chet-lamed])
+              (tc/group-by [:stat2011])
+              (tc/aggregate-columns [:meshutefet :mem-chet-lamed] fun/sum)
+              (print/print-range :all))))))
