@@ -4,7 +4,22 @@
             [tech.v3.datatype.functional :as fun]
             [tech.v3.dataset.print :as print]
             [scicloj.kindly.v4.kind :as kind]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [charred.api :as charred]
+            [com.rpl.specter :as specter]
+            [geo
+             [geohash :as geohash]
+             [jts :as jts]
+             [spatial :as spatial]
+             [io :as geoio]
+             [crs :as crs]])
+  (:import (org.locationtech.jts.index.strtree STRtree)
+           (org.locationtech.jts.geom Geometry Point Polygon Coordinate)
+           (org.locationtech.jts.geom.prep PreparedGeometry
+                                           PreparedLineString
+                                           PreparedPolygon
+                                           PreparedGeometryFactory)
+           (java.util TreeMap)))
 
 
 ;; https://www.jewfaq.org/hebrew_alphabet
@@ -82,6 +97,7 @@
                      (tc/dataset {:key-fn (comp mapping-column-names->std
                                                 str/lower-case)})
                      (tc/drop-rows 0)
+                     (tc/map-columns :stat2011 [:stat2011] #(Integer/parseInt %))
                      (tc/map-columns :place-id [:place-id] #(Integer/parseInt %))
                      (tc/map-columns :kalpi [:kalpi] #(Integer/parseInt %)))]))
        (into {})))
@@ -96,21 +112,91 @@
 
 (def aggregated-by-stat2011
   (->> (range 21 26)
-       (mapv
-        (fn [election]
-          (-> election
-              (votes)
-              (tc/add-column :meshutefet (fn [ds]
-                                           (->> ds
-                                                ((apply juxt (meshutefet-columns
-                                                              election)))
-                                                (apply map fun/+))))
-              (tc/add-column :kalpi (fn [ds]
-                                      (fun/round (:kalpi ds))))
-              (tc/left-join (mapping election)
-                            [:place-name :place-id :kalpi])
-              (tc/select-rows #(-> % :place-name (= "עכו")))
-              (tc/select-columns [:kalpi :stat2011 :meshutefet :mem-chet-lamed])
-              (tc/group-by [:stat2011])
-              (tc/aggregate-columns [:meshutefet :mem-chet-lamed] fun/sum)
-              (print/print-range :all))))))
+       (map (fn [election]
+              [election
+               (-> election
+                   (votes)
+                   (tc/add-column :meshutefet (fn [ds]
+                                                (->> ds
+                                                     ((apply juxt (meshutefet-columns
+                                                                   election)))
+                                                     (apply map fun/+))))
+                   (tc/add-column :kalpi (fn [ds]
+                                           (fun/round (:kalpi ds))))
+                   (tc/left-join (mapping election)
+                                 [:place-name :place-id :kalpi])
+                   (tc/select-rows #(-> % :place-name (= "עכו")))
+                   (tc/select-columns [:kalpi :stat2011 :meshutefet :mem-chet-lamed])
+                   (tc/group-by [:stat2011])
+                   (tc/aggregate-columns [:meshutefet :mem-chet-lamed] fun/sum)
+                   (print/print-range :all))]))
+       (into {})))
+
+(def election->stat2011->counts
+  (-> aggregated-by-stat2011
+      (update-vals
+       (fn [ds]
+         (-> ds
+             (tc/rows :as-maps)
+             (->> (map (fn [row]
+                         [(:stat2011 row)
+                          (dissoc row :stat2011)]))
+                  (into {})))))))
+
+
+
+(def features
+  (-> "data/stat2011/Lamas_Census_Tracts_2011.geojson"
+      slurp
+      (charred/read-json {:key-fn keyword})
+      :features))
+
+
+(def Acre-center
+  [32.92814000 35.07647000])
+
+(defn choropleth-map [details]
+  (delay
+    (kind/reagent
+     ['(fn [{:keys [provider
+                    center
+                    enriched-features
+                    zoom]}]
+         [:div
+          {:style {:height "900px"}
+           :ref   (fn [el]
+                    (let [m (-> js/L
+                                (.map el)
+                                (.setView (clj->js center)
+                                          zoom))]
+                      (-> js/L
+                          .-tileLayer
+                          (.provider provider)
+                          (.addTo m))
+                      (-> js/L
+                          (.geoJson (clj->js enriched-features)
+                                    (clj->js {:style (fn [feature]
+                                                       (-> feature
+                                                           .-properties
+                                                           .-style))}))
+                          #_(.bindTooltip (fn [layer]
+                                            (-> layer
+                                                .-feature
+                                                .-properties
+                                                .-tooltip)))
+                          (.addTo m))))}])
+      details]
+     {:reagent/deps [:leaflet]})))
+
+
+(choropleth-map {:provider "OpenStreetMap.Mapnik"
+                 :center Acre-center
+                 :zoom 13
+                 :enriched-features
+                 (->> features
+                      (filter #(-> % :properties :SHEM_YISHU (= "עכו")))
+                      (mapv (fn [feature]
+                              (-> feature
+                                  (assoc-in [:properties :style]
+                                            {:color      "purple"
+                                             :fillColor  "purple"})))))})
