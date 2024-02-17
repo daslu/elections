@@ -12,7 +12,8 @@
              [jts :as jts]
              [spatial :as spatial]
              [io :as geoio]
-             [crs :as crs]])
+             [crs :as crs]]
+            [clojure.walk :as walk])
   (:import (org.locationtech.jts.index.strtree STRtree)
            (org.locationtech.jts.geom Geometry Point Polygon Coordinate)
            (org.locationtech.jts.geom.prep PreparedGeometry
@@ -20,6 +21,7 @@
                                            PreparedPolygon
                                            PreparedGeometryFactory)
            (java.util TreeMap)))
+
 
 
 ;; https://www.jewfaq.org/hebrew_alphabet
@@ -145,58 +147,86 @@
 
 
 
-(def features
-  (-> "data/stat2011/Lamas_Census_Tracts_2011.geojson"
-      slurp
-      (charred/read-json {:key-fn keyword})
-      :features))
+(defn slurp-gzip
+  "Read a gzipped file into a string"
+  [path]
+  (with-open [in (java.util.zip.GZIPInputStream. (clojure.java.io/input-stream path))]
+    (slurp in)))
 
+(def stat2011-geojson
+  (slurp-gzip "data/stat2011/Lamas_Census_Tracts_2011.geojson.gz"))
+
+(def stat2011-features
+  (geoio/read-geojson stat2011-geojson))
+
+;; https://epsg.io/?q=Israel
+(def crs-transform ; Israel1993->WGS84
+  (geo.crs/create-transform (geo.crs/create-crs 2039)
+                            (geo.crs/create-crs 4326)))
+
+(defn Israel->WSG84 [geometry]
+  (geo.jts/transform-geom geometry crs-transform))
+
+(def stat2011-features-for-drawing
+  (->> stat2011-features
+       (mapv (fn [feature]
+               (-> feature
+                   (update :geometry Israel->WSG84))))))
 
 (def Acre-center
   [32.92814000 35.07647000])
 
 (defn choropleth-map [details]
-  (delay
-    (kind/reagent
-     ['(fn [{:keys [provider
-                    center
-                    enriched-features
-                    zoom]}]
-         [:div
-          {:style {:height "900px"}
-           :ref   (fn [el]
-                    (let [m (-> js/L
-                                (.map el)
-                                (.setView (clj->js center)
-                                          zoom))]
-                      (-> js/L
-                          .-tileLayer
-                          (.provider provider)
-                          (.addTo m))
-                      (-> js/L
-                          (.geoJson (clj->js enriched-features)
-                                    (clj->js {:style (fn [feature]
-                                                       (-> feature
-                                                           .-properties
-                                                           .-style))}))
-                          #_(.bindTooltip (fn [layer]
-                                            (-> layer
-                                                .-feature
-                                                .-properties
-                                                .-tooltip)))
-                          (.addTo m))))}])
-      details]
-     {:reagent/deps [:leaflet]})))
+  (kind/reagent
+   ['(fn [{:keys [provider
+                  center
+                  enriched-features
+                  zoom]}]
+       [:div
+        {:style {:height "900px"}
+         :ref   (fn [el]
+                  (let [m (-> js/L
+                              (.map el)
+                              (.setView (clj->js center)
+                                        zoom))]
+                    (-> js/L
+                        .-tileLayer
+                        (.provider provider)
+                        (.addTo m))
+                    (-> js/L
+                        (.geoJson (clj->js enriched-features)
+                                  (clj->js {:style (fn [feature]
+                                                     (-> feature
+                                                         .-properties
+                                                         .-style))}))
+                        #_(.bindTooltip (fn [layer]
+                                          (-> layer
+                                              .-feature
+                                              .-properties
+                                              .-tooltip)))
+                        (.addTo m))))}])
+    details]
+   {:reagent/deps [:leaflet]}))
 
 
-(choropleth-map {:provider "OpenStreetMap.Mapnik"
-                 :center Acre-center
-                 :zoom 13
-                 :enriched-features
-                 (->> features
-                      (filter #(-> % :properties :SHEM_YISHU (= "עכו")))
-                      (mapv (fn [feature]
-                              (-> feature
-                                  (assoc-in [:properties :style]
-                                            {:color      "purple"
-                                             :fillColor  "purple"})))))})
+(delay
+  (choropleth-map
+   {:provider "OpenStreetMap.Mapnik"
+    :center Acre-center
+    :zoom 13
+    :enriched-features
+    (->> stat2011-features-for-drawing
+         (filter #(-> % :properties :SHEM_YISHU (= "עכו")))
+         (mapv (fn [feature]
+                 (-> feature
+                     (assoc :type "Feature")
+                     (update :geometry
+                             (fn [geometry]
+                               (-> geometry
+                                   geoio/to-geojson
+                                   (charred/read-json {:key-fn keyword}))))
+                     (assoc-in [:properties :style]
+                               {:color      "purple"
+                                :fillColor  "purple"
+                                :opacity 1
+                                :fillOpacity 0.5})))))}))
