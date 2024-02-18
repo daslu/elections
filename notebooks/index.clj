@@ -2,6 +2,7 @@
   (:require [fastmath.stats]
             [tablecloth.api :as tc]
             [tech.v3.datatype.functional :as fun]
+            [tech.v3.tensor :as tensor]
             [tech.v3.dataset.print :as print]
             [scicloj.kindly.v4.kind :as kind]
             [clojure.string :as str]
@@ -22,6 +23,9 @@
                                            PreparedGeometryFactory)
            (java.util TreeMap)))
 
+
+(defn normalize [xs]
+  (fun// xs (fun/sum xs)))
 
 
 ;; https://www.jewfaq.org/hebrew_alphabet
@@ -112,7 +116,10 @@
    25 [:vav-memsofit :dalet :ayin-memsofit]})
 
 
-(def aggregated-by-stat2011
+
+
+
+(def stat2011-aggregation
   (->> (range 21 26)
        (map (fn [election]
               [election
@@ -127,24 +134,30 @@
                                            (fun/round (:kalpi ds))))
                    (tc/left-join (mapping election)
                                  [:place-name :place-id :kalpi])
-                   (tc/select-rows #(-> % :place-name (= "עכו")))
-                   (tc/select-columns [:kalpi :stat2011 :meshutefet :mem-chet-lamed])
-                   (tc/group-by [:stat2011])
-                   (tc/aggregate-columns [:meshutefet :mem-chet-lamed] fun/sum)
+                   #_(tc/select-rows #(-> % :place-name (= "עכו")))
+                   (tc/select-columns [:place-name :place-id :kalpi :stat2011 :voters :meshutefet :mem-chet-lamed])
+                   (tc/group-by [:place-name :place-id :stat2011])
+                   (tc/aggregate-columns [:voters :meshutefet :mem-chet-lamed] fun/sum)
+                   (tc/group-by [:place-name :place-id])
+                   (tc/add-column :meshutefet-place-proportion
+                                  (fn [place-ds]
+                                    (-> place-ds
+                                        :meshutefet
+                                        normalize)))
+                   tc/ungroup
                    (print/print-range :all))]))
        (into {})))
 
-(def election->stat2011->counts
-  (-> aggregated-by-stat2011
+(def election->place-stat2011->aggregation
+  (-> stat2011-aggregation
       (update-vals
        (fn [ds]
          (-> ds
              (tc/rows :as-maps)
              (->> (map (fn [row]
-                         [(:stat2011 row)
-                          (dissoc row :stat2011)]))
+                         [[(:place-id row)(:stat2011 row)]
+                          (dissoc row :place-name :place-id :stat2011)]))
                   (into {})))))))
-
 
 
 (defn slurp-gzip
@@ -176,6 +189,9 @@
 (def Acre-center
   [32.92814000 35.07647000])
 
+(def Lod-center
+  [31.9467, 34.8903])
+
 (defn choropleth-map [details]
   (kind/reagent
    ['(fn [{:keys [provider
@@ -183,7 +199,7 @@
                   enriched-features
                   zoom]}]
        [:div
-        {:style {:height "900px"}
+        {:style {:height "800px"}
          :ref   (fn [el]
                   (let [m (-> js/L
                               (.map el)
@@ -209,32 +225,79 @@
    {:reagent/deps [:leaflet]}))
 
 
+
+(->> stat2011-features-for-drawing
+     (filter #(-> % :properties :SHEM_YISHU (= "עכו")))
+     (mapv (fn [feature]
+             (-> feature
+                 (assoc :type "Feature")
+                 (update :geometry
+                         (fn [geometry]
+                           (-> geometry
+                               geoio/to-geojson
+                               (charred/read-json {:key-fn keyword}))))))))
+
+
+
+(defn point->yx [^Point point]
+  (let [c (.getCoordinate point)]
+    [(.getY c)
+     (.getX c)]))
+
 (delay
-  (let [election 25]
-    (choropleth-map
-     {:provider "OpenStreetMap.Mapnik"
-      :center Acre-center
-      :zoom 13
-      :enriched-features
-      (->> stat2011-features-for-drawing
-           (filter #(-> % :properties :SHEM_YISHU (= "עכו")))
-           (mapv (fn [feature]
-                   (let [info (-> feature
-                                  :properties
-                                  :STAT11
-                                  ((election->stat2011->counts
-                                    election)))]
-                     (-> feature
-                         (assoc :type "Feature")
-                         (update :geometry
-                                 (fn [geometry]
-                                   (-> geometry
-                                       geoio/to-geojson
-                                       (charred/read-json {:key-fn keyword}))))
-                         (assoc-in [:properties :style]
-                                   {:color      "purple"
-                                    :fillColor  "purple"
-                                    :opacity 1
-                                    :fillOpacity 0.5})
-                         (assoc-in [:properties :tooltip]
-                                   (pr-str info)))))))})))
+  (->>
+   [21 25]
+   (mapcat
+    (fn [election]
+      (let [enriched-features
+            (->> stat2011-features-for-drawing
+                 (filter #(-> % :properties :SHEM_YISHU (= "רמלה")))
+                 (map (fn [feature]
+                        (when-let [place-stat2011->aggregation (election->place-stat2011->aggregation
+                                                                election)]
+                          (when-let [{:as aggregation
+                                      :keys [voters
+                                             meshutefet
+                                             mem-chet-lamed
+                                             meshutefet-place-proportion]}
+                                     (-> feature
+                                         :properties
+                                         ((juxt :SEMEL_YISH :STAT11))
+                                         place-stat2011->aggregation)
+                                     ;; ratio (/ meshutefet (+ meshutefet mem-chet-lamed))
+                                     ]
+                            (-> feature
+                                (assoc :type "Feature")
+                                (assoc-in [:properties :center]
+                                          (-> feature
+                                              :geometry
+                                              jts/centroid
+                                              point->yx))
+                                (update :geometry
+                                        (fn [geometry]
+                                          (-> geometry
+                                              geoio/to-geojson
+                                              (charred/read-json {:key-fn keyword}))))
+                                (assoc-in [:properties :style]
+                                          {:color      "yellow"
+                                           :fillColor  "yellow"
+                                           :opacity 1
+                                           :weight 3
+                                           :fillOpacity (* 2 meshutefet-place-proportion)})
+                                (assoc-in [:properties :tooltip]
+                                          (format "%.02f%%" (* 100 meshutefet-place-proportion))))))))
+                 (filter some?)
+                 vec)
+            center (-> enriched-features
+                       (->> (mapv (comp :center :properties)))
+                       (tensor/reduce-axis fun/mean 0)
+                       vec)]
+        [(kind/hiccup
+          [:h3 election])
+         (choropleth-map
+          {:provider "Stadia.AlidadeSmoothDark"
+           #_"OpenStreetMap.Mapnik"
+           :center center
+           :zoom 14
+           :enriched-features enriched-features})])))
+   kind/fragment))
