@@ -14,7 +14,8 @@
              [spatial :as spatial]
              [io :as geoio]
              [crs :as crs]]
-            [clojure.walk :as walk])
+            [clojure.walk :as walk]
+            [clojure.math :as math])
   (:import (org.locationtech.jts.index.strtree STRtree)
            (org.locationtech.jts.geom Geometry Point Polygon Coordinate)
            (org.locationtech.jts.geom.prep PreparedGeometry
@@ -177,14 +178,14 @@
   (geo.crs/create-transform (geo.crs/create-crs 2039)
                             (geo.crs/create-crs 4326)))
 
-(defn Israel->WSG84 [geometry]
+(defn Israel->WGS84 [geometry]
   (geo.jts/transform-geom geometry crs-transform))
 
 (def stat2011-features-for-drawing
   (->> stat2011-features
        (mapv (fn [feature]
                (-> feature
-                   (update :geometry Israel->WSG84))))))
+                   (update :geometry Israel->WGS84))))))
 
 (def Acre-center
   [32.92814000 35.07647000])
@@ -199,7 +200,7 @@
                   enriched-features
                   zoom]}]
        [:div
-        {:style {:height "800px"}
+        {:style {:height "1200px"}
          :ref   (fn [el]
                   (let [m (-> js/L
                               (.map el)
@@ -246,8 +247,8 @@
 
 (delay
   (->>
-   [21 25]
-   (mapcat
+   [21  25]
+   (map
     (fn [election]
       (let [enriched-features
             (->> stat2011-features-for-drawing
@@ -285,19 +286,23 @@
                                            :weight 3
                                            :fillOpacity (* 2 meshutefet-place-proportion)})
                                 (assoc-in [:properties :tooltip]
-                                          (format "%.02f%%" (* 100 meshutefet-place-proportion))))))))
+                                          (format "<h1><p>%d</p><p>%.02f%%</p></h1>"
+                                                  (math/round meshutefet)
+                                                  (* 100 meshutefet-place-proportion))))))))
                  (filter some?)
                  vec)
             center (-> enriched-features
                        (->> (mapv (comp :center :properties)))
                        (tensor/reduce-axis fun/mean 0)
                        vec)]
-        [(kind/hiccup
-          [:h3 election])
+        [:div {:style {:width "50%"}}
+         [:h3 election]
          (choropleth-map
           {:provider "Stadia.AlidadeSmoothDark"
            #_"OpenStreetMap.Mapnik"
            :center center
            :zoom 14
            :enriched-features enriched-features})])))
-   kind/fragment))
+   (into [:div {:style {:display :flex
+                        :width "2000px"}}])
+   kind/hiccup))
