@@ -245,6 +245,11 @@
     [(.getY c)
      (.getX c)]))
 
+
+(->> stat2011-features-for-drawing
+     (map #(-> % :properties :SHEM_YISHU))
+     frequencies)
+
 (delay
   (->>
    [21  25]
@@ -252,7 +257,7 @@
     (fn [election]
       (let [enriched-features
             (->> stat2011-features-for-drawing
-                 (filter #(-> % :properties :SHEM_YISHU (= "רמלה")))
+                 (filter #(-> % :properties :SHEM_YISHU (= "נצרת עילית")))
                  (map (fn [feature]
                         (when-let [place-stat2011->aggregation (election->place-stat2011->aggregation
                                                                 election)]
@@ -306,3 +311,85 @@
    (into [:div {:style {:display :flex
                         :width "2000px"}}])
    kind/hiccup))
+
+
+
+
+
+
+
+
+
+
+
+
+
+(delay
+  (->> ["עכו"
+        "לוד"
+        "רמלה"
+        "נצרת עילית"
+        "חיפה"]
+       (mapcat (fn [y]
+                 [(kind/hiccup [:h1 y])
+                  (->>
+                   [21  25]
+                   (map
+                    (fn [election]
+                      (let [enriched-features
+                            (->> stat2011-features-for-drawing
+                                 (filter #(-> % :properties :SHEM_YISHU (= y)))
+                                 (map (fn [feature]
+                                        (when-let [place-stat2011->aggregation (election->place-stat2011->aggregation
+                                                                                election)]
+                                          (when-let [{:as aggregation
+                                                      :keys [voters
+                                                             meshutefet
+                                                             mem-chet-lamed
+                                                             meshutefet-place-proportion]}
+                                                     (-> feature
+                                                         :properties
+                                                         ((juxt :SEMEL_YISH :STAT11))
+                                                         place-stat2011->aggregation)]
+                                            (let [ratio (/ meshutefet (+ meshutefet mem-chet-lamed))]
+                                              (-> feature
+                                                  (assoc :type "Feature")
+                                                  (assoc-in [:properties :center]
+                                                            (-> feature
+                                                                :geometry
+                                                                jts/centroid
+                                                                point->yx))
+                                                  (update :geometry
+                                                          (fn [geometry]
+                                                            (-> geometry
+                                                                geoio/to-geojson
+                                                                (charred/read-json {:key-fn keyword}))))
+                                                  (assoc-in [:properties :style]
+                                                            {:color      "yellow"
+                                                             :fillColor  "yellow"
+                                                             :opacity 1
+                                                             :weight 3
+                                                             :fillOpacity ratio})
+                                                  (assoc-in [:properties :tooltip]
+                                                            (format "<h1><p>%d</p><p>%d</p><p>%.02f%%</p></h1>"
+                                                                    (math/round meshutefet)
+                                                                    (math/round mem-chet-lamed)
+                                                                    (* 100 meshutefet-place-proportion)))))))))
+                                 (filter some?)
+                                 vec)
+                            center (-> enriched-features
+                                       (->> (mapv (comp :center :properties)))
+                                       (tensor/reduce-axis fun/mean 0)
+                                       vec)]
+                        [:div {:style {:width "50%"}}
+                         [:h3 election]
+                         (choropleth-map
+                          {:provider "Stadia.AlidadeSmoothDark"
+                           #_"OpenStreetMap.Mapnik"
+                           :center center
+                           :zoom 14
+                           :enriched-features enriched-features})])))
+                   (into [:div {:style {:display :flex
+                                        :width "2000px"}}])
+                   kind/hiccup)]))
+       kind/fragment))
