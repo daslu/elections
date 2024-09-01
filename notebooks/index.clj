@@ -15,7 +15,8 @@
              [io :as geoio]
              [crs :as crs]]
             [clojure.walk :as walk]
-            [clojure.math :as math])
+            [clojure.math :as math]
+            [tablecloth.column.api :as tcc])
   (:import (org.locationtech.jts.index.strtree STRtree)
            (org.locationtech.jts.geom Geometry Point Polygon Coordinate)
            (org.locationtech.jts.geom.prep PreparedGeometry
@@ -109,6 +110,7 @@
                      (tc/map-columns :kalpi [:kalpi] #(Integer/parseInt %)))]))
        (into {})))
 
+
 (def meshutefet-columns
   {21 [:vav-memsofit :dalet-ayin-memsofit]
    22 [:vav-dalet-ayin-memsofit]
@@ -116,7 +118,15 @@
    24 [:vav-dalet-ayin-memsofit :ayin-memsofit]
    25 [:vav-memsofit :dalet :ayin-memsofit]})
 
-
+(let [ks (-> (mapping 25)
+             (tc/select-rows #(and (-> % :place-id (= 8600))
+                                   (-> % :stat2011 (= 412))))
+             :kalpi
+             set)]
+  (-> (votes 25)
+      (tc/select-rows #(and (-> % :place-id (= 8600))
+                            (-> % :kalpi math/round ks)))
+      (tc/write! "/tmp/ramat-shikma.csv")))
 
 
 
@@ -131,19 +141,31 @@
                                                      ((apply juxt (meshutefet-columns
                                                                    election)))
                                                      (apply map fun/+))))
+                   (tc/add-column :mahal-shas (fn [ds]
+                                                (->> ds
+                                                     ((apply juxt [:mem-chet-lamed :shin-samech]))
+                                                     (apply map fun/+))))
                    (tc/add-column :kalpi (fn [ds]
                                            (fun/round (:kalpi ds))))
                    (tc/left-join (mapping election)
                                  [:place-name :place-id :kalpi])
                    #_(tc/select-rows #(-> % :place-name (= "עכו")))
-                   (tc/select-columns [:place-name :place-id :kalpi :stat2011 :voters :meshutefet :mem-chet-lamed])
+                   (tc/select-columns [:place-name :place-id :kalpi :stat2011 :voters :meshutefet :mem-chet-lamed :mahal-shas])
                    (tc/group-by [:place-name :place-id :stat2011])
-                   (tc/aggregate-columns [:voters :meshutefet :mem-chet-lamed] fun/sum)
+                   (tc/aggregate-columns [:voters :meshutefet :mem-chet-lamed :mahal-shas] fun/sum)
+                   (tc/add-column :mahal-shas-vs-voters
+                                  #(tcc// (:mahal-shas %)
+                                          (:voters %)))
                    (tc/group-by [:place-name :place-id])
                    (tc/add-column :meshutefet-place-proportion
                                   (fn [place-ds]
                                     (-> place-ds
                                         :meshutefet
+                                        normalize)))
+                   (tc/add-column :mem-chet-lamed--place-proportion
+                                  (fn [place-ds]
+                                    (-> place-ds
+                                        :mem-chet-lamed
                                         normalize)))
                    tc/ungroup
                    (print/print-range :all))]))
@@ -159,6 +181,8 @@
                          [[(:place-id row)(:stat2011 row)]
                           (dissoc row :place-name :place-id :stat2011)]))
                   (into {})))))))
+
+
 
 
 (defn slurp-gzip
@@ -220,7 +244,11 @@
                                         (-> layer
                                             .-feature
                                             .-properties
-                                            .-tooltip)))
+                                            .-tooltip)
+                                        ;; (fn [_]
+                                        ;;   (clj->js
+                                        ;;    {:permanent true}))
+                                        ))
                         (.addTo m))))}])
     details]
    {:reagent/deps [:leaflet]}))
