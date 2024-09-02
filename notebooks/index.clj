@@ -118,16 +118,26 @@
    24 [:vav-dalet-ayin-memsofit :ayin-memsofit]
    25 [:vav-memsofit :dalet :ayin-memsofit]})
 
-(let [ks (-> (mapping 25)
-             (tc/select-rows #(and (-> % :place-id (= 8600))
-                                   (-> % :stat2011 (= 412))))
-             :kalpi
-             set)]
-  (-> (votes 25)
-      (tc/select-rows #(and (-> % :place-id (= 8600))
-                            (-> % :kalpi math/round ks)))
-      (tc/write! "/tmp/ramat-shikma.csv")))
+(comment
+  (let [ks (-> (mapping 25)
+               (tc/select-rows #(and (-> % :place-id (= 8600))
+                                     (-> % :stat2011 (= 412))))
+               :kalpi
+               set)]
+    (-> (votes 25)
+        (tc/select-rows #(and (-> % :place-id (= 8600))
+                              (-> % :kalpi math/round ks)))
+        (tc/write! "/tmp/ramat-shikma.csv")))
 
+  (let [ks (-> (mapping 25)
+               (tc/select-rows #(and (-> % :place-id (= 8600))
+                                     (-> % :stat2011 (= 418))))
+               :kalpi
+               set)]
+    (-> (votes 25)
+        (tc/select-rows #(and (-> % :place-id (= 8600))
+                              (-> % :kalpi math/round ks)))
+        (tc/write! "/tmp/ramat-hen.csv"))))
 
 
 (def stat2011-aggregation
