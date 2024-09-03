@@ -9,6 +9,7 @@
             [clojure.java.io :as io]
             [scicloj.kindly.v4.kind :as kind]
             index
+            h2008
             [clojure.math :as math]))
 
 
@@ -95,6 +96,24 @@
         :zoom 14
         :enriched-features enriched-features})])))
 
+(->> (range 1 11)
+     (map (fn [i]
+            (kind/hiccup [:div {:style {:width "100px"
+                                        :background-color "darkgreen"
+                                        :color "white"
+                                        :opacity (* 0.07 i)
+                                        :margin "0px"}}
+                          [:h4{:style {:margin "0px"}}
+                           i]])))
+     (into [:div])
+     kind/fragment)
+
+(->> (range 1 11)
+     (map (fn [i]
+            [:div {:background-color "darkgreen"}
+             [:big [:p i]]]))
+     (into [:div])
+     kind/hiccup)
 
 ;; ### אחוז הצבעה לליכוד ולשס 2022
 
@@ -154,3 +173,14 @@
       :center center
       :zoom 14
       :enriched-features enriched-features})))
+
+
+(-> h2008
+    (tc/select-rows #(-> % :SmlYishuvPUF (= 8600)))
+    (tc/group-by [:SmlEzorStatistiKtvtMegurimPUF
+                  :YabeshetMotzaByEmMchlkMchvPUF
+                  :YabeshetMotzaByAvMchlkMchvPUF])
+    (tc/aggregate {:n tc/row-count})
+    (tc/select-rows #(-> %
+                         :SmlEzorStatistiKtvtMegurimPUF
+                         #{411 412})))
