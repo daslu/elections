@@ -1,6 +1,7 @@
 ^{:kindly/hide-code true}
 (ns ramat-gan
   (:require [tablecloth.api :as tc]
+            [tablecloth.column.api :as tc]
             [geo.jts :as jts]
             [charred.api :as charred]
             [geo.io :as geoio]
@@ -10,7 +11,8 @@
             [scicloj.kindly.v4.kind :as kind]
             index
             h2008
-            [clojure.math :as math]))
+            [clojure.math :as math]
+            [tablecloth.column.api :as tcc]))
 
 
 
@@ -58,7 +60,7 @@
                                               10.0))
                                     0)
                             color (if CLUSTER-2019
-                                    "darkgreen"
+                                    "darkpurple"
                                     "darkred")]
                         (-> feature
                             (assoc :type "Feature")
@@ -99,7 +101,7 @@
 (->> (range 1 11)
      (map (fn [i]
             (kind/hiccup [:div {:style {:width "100px"
-                                        :background-color "darkgreen"
+                                        :background-color "darkpurple"
                                         :color "white"
                                         :opacity (* 0.07 i)
                                         :margin "0px"}}
@@ -110,7 +112,7 @@
 
 (->> (range 1 11)
      (map (fn [i]
-            [:div {:background-color "darkgreen"}
+            [:div {:background-color "darkpurple"}
              [:big [:p i]]]))
      (into [:div])
      kind/hiccup)
@@ -133,7 +135,7 @@
                                 ((juxt :SEMEL_YISH :STAT11))
                                 place-stat2011->aggregation)
                             color (if mahal-shas-vs-voters
-                                    "darkgreen"
+                                    "darkpurple"
                                     "darkred")
                             opacity (or
                                      mahal-shas-vs-voters
@@ -175,12 +177,85 @@
       :enriched-features enriched-features})))
 
 
-(-> h2008
-    (tc/select-rows #(-> % :SmlYishuvPUF (= 8600)))
-    (tc/group-by [:SmlEzorStatistiKtvtMegurimPUF
-                  :YabeshetMotzaByEmMchlkMchvPUF
-                  :YabeshetMotzaByAvMchlkMchvPUF])
-    (tc/aggregate {:n tc/row-count})
-    (tc/select-rows #(-> %
-                         :SmlEzorStatistiKtvtMegurimPUF
-                         #{411 412})))
+(let [sa-2011->demographics (-> h2008/h2008
+                                (tc/select-rows #(-> % :SmlYishuvPUF (= 8600)))
+                                (tc/group-by [:SmlEzorStatistiKtvtMegurimPUF])
+                                (tc/aggregate (fn [ds]
+                                                (let [yabashot (-> ds
+                                                                   (tc/select-columns [:YabeshetMotzaByEmMchlkMchvPUF
+                                                                                       :YabeshetMotzaByAvMchlkMchvPUF])
+                                                                   tc/rows)]
+                                                  {:mizrachi (->> yabashot
+                                                                  (filter (fn [ys]
+                                                                            (->> ys
+                                                                                 (every? #{1 2}))))
+                                                                  count)
+                                                   :ashkenazi (->> yabashot
+                                                                   (filter (fn [ys]
+                                                                             (->> ys
+                                                                                  (every? #{3 5}))))
+                                                                   count)})))
+                                (tc/rename-columns {:summary-ashkenazi :n-ashkenazi
+                                                    :summary-mizrachi :n-mizrachi
+                                                    :SmlEzorStatistiKtvtMegurimPUF :sa-2011})
+                                (tc/add-columns {:n-relevant #(tcc/+ (:n-ashkenazi %)
+                                                                     (:n-mizrachi %))})
+                                (tc/add-columns {:p-mizrachi #(-> (:n-mizrachi %)
+                                                                  (tcc/* 1.0)
+                                                                  (tcc// (:n-relevant %)))
+                                                 :p-ashkenazi #(-> (:n-ashkenazi %)
+                                                                   (tcc/* 1.0)
+                                                                   (tcc// (:n-relevant %)))})
+                                (tc/group-by :sa-2011 {:result-type :as-map})
+                                (update-vals (fn [ds]
+                                               (-> ds
+                                                   (update-vals only-one)))))
+      enriched-features (->> index/stat2011-features-for-drawing
+                             (filter #(-> % :properties :SHEM_YISHU (= "רמת גן")))
+                             (map (fn [feature]
+                                    (let [{:keys [p-ashkenazi]} (-> feature
+                                                                    :properties
+                                                                    :STAT11
+                                                                    sa-2011->demographics)]
+                                      (let [ratio (if p-ashkenazi
+                                                    (* 0.7 (/ p-ashkenazi
+                                                              10.0))
+                                                    0)
+                                            color (if p-ashkenazi
+                                                    "darkpurple"
+                                                    "darkred")]
+                                        (-> feature
+                                            (assoc :type "Feature")
+                                            (assoc-in [:properties :center]
+                                                      (-> feature
+                                                          :geometry
+                                                          jts/centroid
+                                                          index/point->yx))
+                                            (update :geometry
+                                                    (fn [geometry]
+                                                      (-> geometry
+                                                          geoio/to-geojson
+                                                          (charred/read-json {:key-fn keyword}))))
+                                            (assoc-in [:properties :style]
+                                                      {:color      color
+                                                       :fillColor  color
+                                                       :opacity 1
+                                                       :weight 3
+                                                       :fillOpacity ratio})
+                                            (assoc-in [:properties :tooltip]
+                                                      (format "<h1><p>%f</p></h1>"
+                                                              p-ashkenazi)))))))
+                             (filter some?)
+                             vec)
+      center (-> enriched-features
+                 (->> (mapv (comp :center :properties)))
+                 (tensor/reduce-axis fun/mean 0)
+                 vec)]
+  (kind/hiccup
+   [:div
+    (index/choropleth-map
+     {:provider "Stadia.AlidadeSmooth"
+      ;;"OpenStreetMap.Mapnik"
+      :center center
+      :zoom 14
+      :enriched-features enriched-features})]))
